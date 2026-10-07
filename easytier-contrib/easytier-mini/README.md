@@ -3,8 +3,15 @@
 `easytier-mini` is a native EasyTier POC binary. It shares EasyTier's TOML
 configuration model, peer protocol, TCP/UDP tunnel implementations, TUN,
 dynamic IPv4 allocation, the smoltcp userspace path and STUN/UDP hole-punching
-core with the full binary. It includes AES-GCM so its default encryption
+core with the full binary. It also supports subnet proxy configuration
+(`[[proxy_network]]`) with TCP, UDP and ICMP forwarding. It includes AES-GCM so its default encryption
 setting interoperates with the full binary's default configuration.
+
+Optional WS/WSS support can be enabled with `--features websocket`. This also
+retains WS/WSS endpoints in the compact runtime's configuration. The default
+build remains TCP/UDP only. See [Oray X1 builds and deployment](ORAY-WSS.md)
+for the MIPSEL GitHub Actions workflow and UPX artifacts; the size targets below
+apply to the default build, not the WebSocket-enabled variant.
 
 Build it with:
 
@@ -91,7 +98,8 @@ the controller while no port-forward service starts in mini. ChaCha20 falls
 back to AES-GCM rather than plaintext.
 
 The compact runtime supports `tcp://` and `udp://` listener, mapped-listener
-and peer URLs. `no_tun = true` runs through smoltcp without an OS TUN device,
+and peer URLs, plus `ws://` and `wss://` when built with `--features websocket`.
+`no_tun = true` runs through smoltcp without an OS TUN device,
 and `dhcp = true` allocates the virtual IPv4 address dynamically.
 
 The mini feature set keeps STUN collection, UDP hole punching, Web heartbeats,

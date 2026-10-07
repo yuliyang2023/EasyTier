@@ -1151,7 +1151,7 @@ fn connector_addrs_from_request(
 }
 
 fn mapped_listener_port(url: &Url) -> Option<u16> {
-    url.port()
+    url.port_or_known_default()
         .or_else(|| crate::connectivity::protocol::protocol_default_port(url.scheme()))
 }
 
@@ -1215,6 +1215,24 @@ mod tests {
                 foreign_network: false,
                 stun,
             }
+        }
+    }
+
+    #[test]
+    fn websocket_url_ports_for_mapped_listeners() {
+        for (raw_url, expected_port) in [
+            ("ws://relay.example:80/ws", Some(80)),
+            ("wss://relay.example:443/ws", Some(443)),
+            ("wss://relay.example:8443/ws", Some(8443)),
+            ("wss://relay.example:0/ws", Some(0)),
+            ("tcp://relay.example", Some(11010)),
+            ("ring://local", None),
+        ] {
+            assert_eq!(
+                mapped_listener_port(&raw_url.parse().unwrap()),
+                expected_port,
+                "{raw_url}"
+            );
         }
     }
 

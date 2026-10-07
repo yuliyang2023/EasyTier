@@ -117,6 +117,12 @@ async fn map_from_ws_message(
         tracing::warn!("recv close message from websocket");
         return None;
     }
+    // The WebSocket engine handles Ping/Pong (including automatic Pong).
+    // These control frames are not EasyTier packets and must not tear down
+    // an otherwise healthy tunnel when a relay sends its heartbeat.
+    if message.is_ping() || message.is_pong() {
+        return None;
+    }
     if !message.is_binary() {
         let message = format!("{message:?}");
         tracing::error!(?message, "Invalid packet");
@@ -458,6 +464,79 @@ pub mod tests {
                 "close failed",
             )))
         }
+    }
+
+    #[tokio::test]
+    async fn websocket_control_frames_preserve_binary_tunnel_packets() {
+        for message in [Message::ping(Vec::new()), Message::pong(Vec::new())] {
+            assert!(map_from_ws_message(Ok(message)).await.is_none());
+        }
+        assert!(
+            map_from_ws_message(Ok(Message::text("invalid tunnel packet")))
+                .await
+                .unwrap()
+                .is_err()
+        );
+        let packet = ZCPacket::new_with_payload(b"after heartbeat");
+        let message = Message::binary(packet.tunnel_payload_bytes().freeze());
+        let received = map_from_ws_message(Ok(message)).await.unwrap().unwrap();
+        assert_eq!(received.payload(), b"after heartbeat");
+    }
+
+    #[tokio::test]
+    async fn websocket_control_frames_keep_native_connection_alive() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let (_, mut websocket) = ServerBuilder::new().accept(socket).await.unwrap();
+            websocket
+                .send(Message::ping(b"heartbeat".to_vec()))
+                .await
+                .unwrap();
+            websocket
+                .send(Message::pong(b"unsolicited".to_vec()))
+                .await
+                .unwrap();
+            let packet = ZCPacket::new_with_payload(b"after heartbeat");
+            websocket
+                .send(Message::binary(packet.tunnel_payload_bytes().freeze()))
+                .await
+                .unwrap();
+
+            let mut saw_pong = false;
+            let mut saw_reply = false;
+            while !saw_pong || !saw_reply {
+                let message = websocket.next().await.unwrap().unwrap();
+                if message.is_pong() {
+                    assert_eq!(message.into_payload().as_bytes(), b"heartbeat");
+                    saw_pong = true;
+                } else if message.is_binary() {
+                    let packet = map_from_ws_message(Ok(message)).await.unwrap().unwrap();
+                    assert_eq!(packet.payload(), b"still connected");
+                    saw_reply = true;
+                }
+            }
+        });
+
+        timeout(Duration::from_secs(5), async {
+            let socket = tokio::net::TcpStream::connect(addr).await.unwrap();
+            let tunnel = upgrade_connected(
+                RuntimeTcpSocket::new(socket),
+                format!("ws://{addr}/ws").parse().unwrap(),
+            )
+            .await
+            .unwrap();
+            let (mut recv, mut send) = tunnel.split();
+            let packet = recv.next().await.unwrap().unwrap();
+            assert_eq!(packet.payload(), b"after heartbeat");
+            send.send(ZCPacket::new_with_payload(b"still connected"))
+                .await
+                .unwrap();
+            server.await.unwrap();
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

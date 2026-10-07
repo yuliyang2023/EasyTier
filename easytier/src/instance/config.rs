@@ -71,7 +71,8 @@ pub(crate) fn compact_runtime_core_host_config() -> CoreInstanceHostConfig {
     config.host_routing.local_exit_node_fallback = false;
     config.public_ipv6_provider_supported = false;
     config.gateway_enabled = false;
-    config.proxy_enabled = false;
+    // ICMP proxy also enables the shared TCP/UDP packet proxy engine.
+    config.proxy_enabled = cfg!(feature = "icmp-proxy");
     config.vpn_portal_enabled = false;
     config.magic_dns_enabled = false;
     config.kcp_enabled = false;
@@ -81,6 +82,8 @@ pub(crate) fn compact_runtime_core_host_config() -> CoreInstanceHostConfig {
     config.tcp_hole_punching_enabled = false;
     config.ignore_unsupported_config = true;
     config.endpoint_protocols = vec!["tcp".to_owned(), "udp".to_owned()];
+    #[cfg(feature = "websocket")]
+    config.endpoint_protocols.extend(["ws".to_owned(), "wss".to_owned()]);
     config
 }
 
@@ -135,6 +138,71 @@ mod tests {
     use crate::common::global_ctx::tests::get_mock_global_ctx;
 
     use super::*;
+
+    #[test]
+    fn compact_runtime_keeps_websocket_endpoints_when_compiled() {
+        let config = TomlConfig::new_from_str(
+            r#"
+listeners = ["tcp://127.0.0.1:11010", "ws://127.0.0.1:11011", "wss://127.0.0.1:11012"]
+[[peer]]
+uri = "ws://example.com:11011/path"
+[[peer]]
+uri = "wss://example.com:443/path"
+[[peer]]
+uri = "quic://example.com:11013"
+"#,
+        )
+        .unwrap();
+        let host = compact_runtime_core_host_config();
+        let normalized =
+            easytier_core::instance::CoreInstanceConfig::from_toml_with_host(&config, &host)
+                .unwrap();
+
+        assert_eq!(
+            normalized.connectivity.initial_peers.len(),
+            if cfg!(feature = "websocket") { 2 } else { 0 }
+        );
+        assert_eq!(
+            normalized.connectivity.listeners.unwrap().urls.len(),
+            if cfg!(feature = "websocket") { 3 } else { 1 }
+        );
+    }
+
+    #[test]
+    fn compact_runtime_keeps_subnet_proxy_when_compiled() {
+        use easytier_core::config::toml::ConfigLoader as _;
+
+        let config = TomlConfig::new_from_str(
+            r#"
+ipv4 = "10.126.126.2/24"
+[[proxy_network]]
+cidr = "192.168.1.0/24"
+"#,
+        )
+        .unwrap();
+        config.get_id();
+        let before = config.dump();
+        let host = compact_runtime_core_host_config();
+        let normalized =
+            easytier_core::instance::CoreInstanceConfig::from_toml_with_host(&config, &host)
+                .unwrap();
+
+        assert_eq!(config.dump(), before);
+        assert_eq!(
+            normalized.connectivity.startup_plan.packet_proxy,
+            cfg!(feature = "icmp-proxy")
+        );
+        let networks = &normalized.peer.snapshot.runtime.core.routes.proxy_networks;
+        if cfg!(feature = "icmp-proxy") {
+            assert_eq!(networks.len(), 1);
+            assert_eq!(networks[0].real.address.to_string(), "192.168.1.0");
+            assert_eq!(networks[0].real.prefix_len, 24);
+            assert!(!host.kcp_enabled);
+            assert!(!host.quic_enabled);
+        } else {
+            assert!(networks.is_empty());
+        }
+    }
 
     #[test]
     fn native_host_config_contains_only_platform_policy() {

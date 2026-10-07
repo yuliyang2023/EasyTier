@@ -1024,7 +1024,9 @@ pub(crate) async fn resolve_url_addrs(
     let host = url
         .host()
         .ok_or_else(|| anyhow::anyhow!("URL has no host: {url}"))?;
-    let port = url.port().unwrap_or(default_port);
+    // Url normalizes explicit WS/WSS standard ports away. Recover the
+    // scheme's port before falling back to EasyTier protocol metadata.
+    let port = url.port_or_known_default().unwrap_or(default_port);
     let addrs = match host {
         url::Host::Ipv4(addr) => vec![SocketAddr::new(IpAddr::V4(addr), port)],
         url::Host::Ipv6(addr) => vec![SocketAddr::new(IpAddr::V6(addr), port)],
@@ -1344,6 +1346,38 @@ mod tests {
             options.connect_timeout(&"tcp://127.0.0.1".parse().unwrap(), &Protocol),
             Duration::from_secs(2)
         );
+    }
+
+    #[tokio::test]
+    async fn websocket_url_ports_override_transport_fallback() {
+        let resolver = StaticDnsResolver {
+            ips: vec![IpAddr::from([127, 0, 0, 1])],
+            queries: Mutex::new(Vec::new()),
+        };
+        let cases = [
+            ("ws://relay.example/ws", 80),
+            ("ws://relay.example:80/ws", 80),
+            ("wss://relay.example/ws", 443),
+            ("wss://relay.example:443/ws", 443),
+            ("wss://127.0.0.1:443/ws", 443),
+            ("wss://[::1]:443/ws", 443),
+            ("ws://relay.example:8787/ws", 8787),
+            ("wss://relay.example:8443/ws", 8443),
+            ("wss://relay.example:0/ws", 0),
+            ("tcp://relay.example", 11012),
+            ("tcp://relay.example:11010", 11010),
+        ];
+
+        for (raw_url, expected_port) in cases {
+            let url = raw_url.parse().unwrap();
+            // Deliberately supply the old WSS default to catch normalization
+            // regressions even when protocol metadata happens to be correct.
+            let addrs = resolve_url_addrs(&url, 11012, SocketContext::default(), &resolver)
+                .await
+                .unwrap();
+            assert_eq!(addrs.len(), 1, "{raw_url}");
+            assert_eq!(addrs[0].port(), expected_port, "{raw_url}");
+        }
     }
 
     #[tokio::test]

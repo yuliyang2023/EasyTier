@@ -474,8 +474,9 @@ async fn socket_addrs_with_system_resolver(
     allow_system_resolver: bool,
 ) -> Result<Vec<SocketAddr>, Error> {
     let host = url.host().ok_or(Error::InvalidUrl(url.to_string()))?;
+    // Standard ports (including explicit :80/:443) are normalized by Url.
     let port = url
-        .port()
+        .port_or_known_default()
         .or_else(default_port_number)
         .ok_or(Error::InvalidUrl(url.to_string()))?;
 
@@ -625,6 +626,28 @@ mod tests {
             .unwrap();
         assert_eq!(2, addrs.len(), "addrs: {:?}", addrs);
         println!("addrs2: {:?}", addrs);
+    }
+
+    #[tokio::test]
+    async fn websocket_url_ports_override_dns_fallback() {
+        let cases = [
+            ("ws://127.0.0.1/ws", 80),
+            ("ws://127.0.0.1:80/ws", 80),
+            ("wss://127.0.0.1/ws", 443),
+            ("wss://127.0.0.1:443/ws", 443),
+            ("wss://[::1]:443/ws", 443),
+            ("ws://127.0.0.1:8787/ws", 8787),
+            ("wss://127.0.0.1:8443/ws", 8443),
+            ("wss://127.0.0.1:0/ws", 0),
+            ("tcp://127.0.0.1", 11012),
+        ];
+
+        for (raw_url, expected_port) in cases {
+            let url = url::Url::parse(raw_url).unwrap();
+            let addrs = socket_addrs(&url, || Some(11012)).await.unwrap();
+            assert_eq!(addrs.len(), 1, "{raw_url}");
+            assert_eq!(addrs[0].port(), expected_port, "{raw_url}");
+        }
     }
 
     #[tokio::test]

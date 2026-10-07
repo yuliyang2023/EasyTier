@@ -94,18 +94,25 @@ fn parse_args(mut args: impl Iterator<Item = OsString>) -> anyhow::Result<Comman
     Ok(Command::Run(options))
 }
 
-fn require_tcp_or_udp(scheme: &str, source: &str) -> anyhow::Result<()> {
+fn require_supported_transport(scheme: &str, source: &str) -> anyhow::Result<()> {
     match scheme {
         "tcp" | "udp" => Ok(()),
+        #[cfg(feature = "websocket")]
+        "ws" | "wss" => Ok(()),
         scheme => anyhow::bail!(
-            "{source} uses unsupported tunnel scheme {scheme:?}; easytier-mini supports only tcp:// and udp://"
+            "{source} uses unsupported tunnel scheme {scheme:?}; supported: tcp://, udp://{}",
+            if cfg!(feature = "websocket") {
+                ", ws://, wss://"
+            } else {
+                ""
+            }
         ),
     }
 }
 
 fn validate_config_server(config_server: &str) -> anyhow::Result<()> {
     let endpoint = parse_config_server_endpoint(config_server)?;
-    require_tcp_or_udp(endpoint.connect_url().scheme(), "config server")
+    require_supported_transport(endpoint.connect_url().scheme(), "config server")
 }
 
 struct MiniWebClientHooks;
@@ -236,6 +243,17 @@ mod tests {
     fn accepts_tcp_udp_config_server() {
         assert!(validate_config_server("udp://127.0.0.1:22020/token").is_ok());
         assert!(validate_config_server("quic://127.0.0.1:22020/token").is_err());
+    }
+
+    #[test]
+    fn websocket_transport_requires_feature() {
+        for scheme in ["ws", "wss"] {
+            assert_eq!(
+                require_supported_transport(scheme, "peer").is_ok(),
+                cfg!(feature = "websocket")
+            );
+        }
+        assert!(require_supported_transport("quic", "peer").is_err());
     }
 
     #[tokio::test]

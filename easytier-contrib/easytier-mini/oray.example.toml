@@ -1,0 +1,15 @@
+instance_name = "oray-mini-wss"
+hostname = "oray-x1"
+ipv4 = "10.126.126.2/24"
+listeners = ["tcp://0.0.0.0:11010", "udp://0.0.0.0:11010"]
+
+[network_identity]
+network_name = "YOUR_NETWORK_NAME"
+network_secret = "YOUR_NETWORK_SECRET"
+
+[[peer]]
+uri = "wss://relay.example.com/your-path"
+
+[flags]
+# Keep separate from HEV's tun0. Choose an unused address in your mesh.
+dev_name = "et0"

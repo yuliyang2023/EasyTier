@@ -7,12 +7,17 @@ rust-version.workspace = true
 license-file = "../../LICENSE"
 build = "build.rs"
 
+[features]
+# Optional transport support; the default compact TCP/UDP build stays unchanged.
+websocket = ["easytier/websocket"]
+
 [dependencies]
 anyhow.workspace = true
 easytier = { workspace = true, features = [
     "aes-gcm",
     "dhcp-ipv4",
     "logging",
+    "icmp-proxy",
     "proxy-cidr-monitor",
     "smoltcp",
     "tun",
