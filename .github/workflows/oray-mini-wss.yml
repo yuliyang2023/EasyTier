@@ -1,0 +1,243 @@
+name: Oray X1 Mini WSS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, oray-mini-wss]
+    paths:
+      - '.github/workflows/oray-mini-wss.yml'
+      - '.github/actions/prepare-build/**'
+      - '.cargo/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - 'easytier/**'
+      - 'easytier-core/**'
+      - 'easytier-proto/**'
+      - 'easytier-contrib/easytier-mini/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oray-mini-wss-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/prepare-build
+        with:
+          gui: 'false'
+          pnpm: 'false'
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: oray-mini-wss-tests
+      - name: Verify standard WebSocket ports
+        run: |
+          cargo test --locked -p easytier-core --lib websocket_url_ports_
+          features=aes-gcm,dhcp-ipv4,icmp-proxy,logging,proxy-cidr-monitor,smoltcp,tun,web-client,management,websocket
+          cargo test --locked -p easytier --lib --no-default-features --features "$features" websocket_url_ports_
+          cargo test --locked -p easytier --lib --no-default-features --features "$features" websocket_control_frames_
+      - name: Test Mini with and without WebSocket
+        run: |
+          cargo test --locked -p easytier-mini
+          cargo test --locked -p easytier-mini --features websocket
+      - name: Verify compact endpoint filtering and WS/WSS handshakes
+        run: |
+          # Upstream lib tests require management (JSON RPC/config helpers and
+          # Tokio's multi-thread runtime). This is test-only, not the Mini build.
+          features=aes-gcm,dhcp-ipv4,icmp-proxy,logging,proxy-cidr-monitor,smoltcp,tun,web-client,management
+          cargo test --locked -p easytier --lib --no-default-features --features "$features" compact_runtime_keeps_
+          cargo test --locked -p easytier --lib --no-default-features --features "$features,websocket" compact_runtime_keeps_
+          cargo test --locked -p easytier --lib --no-default-features --features "$features,websocket" runtime_websocket_upgraders
+
+  mipsel:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/prepare-build
+        with:
+          target: mipsel-unknown-linux-musl
+          gui: 'false'
+          pnpm: 'false'
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: oray-mini-wss-mipsel
+      - name: Build compact static MIPSEL with WebSocket
+        env:
+          EASYTIER_MINI_FEATURES: websocket
+        run: ./easytier-contrib/easytier-mini/build-mips.sh mipsel
+      - name: Install binary verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user upx-ucl
+      - name: Package and smoke test both binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/mipsel-unknown-linux-musl/mini/easytier-mini dist/easytier-mini-oray-wss
+          cp dist/easytier-mini-oray-wss dist/easytier-mini-oray-wss-upx
+          file dist/easytier-mini-oray-wss | tee dist/ELF.txt
+          grep -q 'LSB.*MIPS.*statically linked' dist/ELF.txt
+          qemu-mipsel dist/easytier-mini-oray-wss --version
+          qemu-mipsel dist/easytier-mini-oray-wss --help
+          upx --best --lzma dist/easytier-mini-oray-wss-upx
+          upx -t dist/easytier-mini-oray-wss-upx
+          qemu-mipsel dist/easytier-mini-oray-wss-upx --version
+          cp easytier-contrib/easytier-mini/oray.example.toml dist/
+          cp easytier-contrib/easytier-mini/ORAY-WSS.md dist/README.md
+          cp LICENSE dist/
+          git rev-parse HEAD > dist/SOURCE_COMMIT.txt
+          cargo tree --locked -p easytier-mini --features websocket --target mipsel-unknown-linux-musl -e features > dist/FEATURES.txt
+          wc -c dist/easytier-mini-oray-wss* | tee dist/SIZES.txt
+          (cd dist && sha256sum easytier-mini-oray-wss easytier-mini-oray-wss-upx > SHA256SUMS)
+          {
+            echo '## Oray X1 MIPSEL Mini + WS/WSS'
+            echo '```text'
+            cat dist/SIZES.txt
+            echo '```'
+            echo 'Static soft-float MIPSEL; native WS/WSS handshake tests and QEMU smoke tests passed.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: easytier-mini-oray-wss-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  linux-x86_64:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/prepare-build
+        with:
+          target: x86_64-unknown-linux-musl
+          gui: 'false'
+          pnpm: 'false'
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: relay-wss-linux-x86_64
+      - name: Build Linux x86_64 core and CLI
+        run: |
+          cargo build --locked --release --target x86_64-unknown-linux-musl -p easytier --bin easytier-core --bin easytier-cli
+      - name: Package and smoke test binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-musl/release/easytier-core dist/
+          cp target/x86_64-unknown-linux-musl/release/easytier-cli dist/
+          dist/easytier-core --version
+          dist/easytier-cli --version
+          cp LICENSE dist/
+          git rev-parse HEAD > dist/SOURCE_COMMIT.txt
+          (cd dist && sha256sum easytier-core easytier-cli > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: easytier-linux-x86_64-wss-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  macos:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            arch: x86_64
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/prepare-build
+        with:
+          target: ${{ matrix.target }}
+          gui: 'false'
+          pnpm: 'false'
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: relay-wss-macos-${{ matrix.arch }}
+      - name: Build macOS core and CLI
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          cargo build --locked --release --target "$BUILD_TARGET" -p easytier --bin easytier-core --bin easytier-cli
+      - name: Package and smoke test binaries
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp "target/$BUILD_TARGET/release/easytier-core" dist/
+          cp "target/$BUILD_TARGET/release/easytier-cli" dist/
+          dist/easytier-core --version
+          dist/easytier-cli --version
+          file dist/easytier-core dist/easytier-cli > dist/MACH-O.txt
+          cp LICENSE dist/
+          git rev-parse HEAD > dist/SOURCE_COMMIT.txt
+          (cd dist && shasum -a 256 easytier-core easytier-cli > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: easytier-macos-${{ matrix.arch }}-wss-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  windows-x86_64:
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/prepare-build
+        with:
+          target: x86_64-pc-windows-msvc
+          gui: 'false'
+          pnpm: 'false'
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: relay-wss-windows-x86_64
+      - name: Build Windows x64 core and CLI
+        run: |
+          cargo build --locked --release --target x86_64-pc-windows-msvc -p easytier --bin easytier-core --bin easytier-cli
+      - name: Package and smoke test executables
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/x86_64-pc-windows-msvc/release/easytier-core.exe dist/
+          cp target/x86_64-pc-windows-msvc/release/easytier-cli.exe dist/
+          find easytier/third_party/x86_64 -maxdepth 1 -type f \( -name '*.dll' -o -name '*.sys' \) -exec cp {} dist/ \;
+          dist/easytier-core.exe --version
+          dist/easytier-cli.exe --version
+          cp LICENSE dist/
+          git rev-parse HEAD > dist/SOURCE_COMMIT.txt
+          (cd dist && sha256sum easytier-core.exe easytier-cli.exe *.dll *.sys > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: easytier-windows-x86_64-wss-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30

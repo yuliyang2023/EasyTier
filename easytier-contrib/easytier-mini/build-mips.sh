@@ -35,6 +35,8 @@ build_mips_target() {
             --manifest-path "$mini_repo_dir/Cargo.toml" \
             --profile mini \
             --target "$mini_target" \
+            --locked \
+            --features "${EASYTIER_MINI_FEATURES:-}" \
             -Z build-std=std \
             -Z build-std-features=optimize_for_size \
             -p easytier-mini
