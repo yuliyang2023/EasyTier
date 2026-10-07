@@ -42,10 +42,11 @@ jobs:
           features=aes-gcm,dhcp-ipv4,icmp-proxy,logging,proxy-cidr-monitor,smoltcp,tun,web-client,management,websocket
           cargo test --locked -p easytier --lib --no-default-features --features "$features" websocket_url_ports_
           cargo test --locked -p easytier --lib --no-default-features --features "$features" websocket_control_frames_
-      - name: Test Mini with and without WebSocket
+      - name: Test Mini with WebSocket and TXT DNS variants
         run: |
           cargo test --locked -p easytier-mini
           cargo test --locked -p easytier-mini --features websocket
+          cargo test --locked -p easytier-mini --features websocket,dns-resolver
       - name: Verify compact endpoint filtering and WS/WSS handshakes
         run: |
           # Upstream lib tests require management (JSON RPC/config helpers and
@@ -54,6 +55,7 @@ jobs:
           cargo test --locked -p easytier --lib --no-default-features --features "$features" compact_runtime_keeps_
           cargo test --locked -p easytier --lib --no-default-features --features "$features,websocket" compact_runtime_keeps_
           cargo test --locked -p easytier --lib --no-default-features --features "$features,websocket" runtime_websocket_upgraders
+          cargo test --locked -p easytier --lib --no-default-features --features "$features,websocket,dns-resolver" system_lookup_
 
   mipsel:
     needs: test
@@ -70,9 +72,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: oray-mini-wss-mipsel
-      - name: Build compact static MIPSEL with WebSocket
+      - name: Build compact static MIPSEL with WebSocket and TXT DNS
         env:
-          EASYTIER_MINI_FEATURES: websocket
+          EASYTIER_MINI_FEATURES: websocket,dns-resolver
         run: ./easytier-contrib/easytier-mini/build-mips.sh mipsel
       - name: Install binary verification tools
         run: |
@@ -95,11 +97,11 @@ jobs:
           cp easytier-contrib/easytier-mini/ORAY-WSS.md dist/README.md
           cp LICENSE dist/
           git rev-parse HEAD > dist/SOURCE_COMMIT.txt
-          cargo tree --locked -p easytier-mini --features websocket --target mipsel-unknown-linux-musl -e features > dist/FEATURES.txt
+          cargo tree --locked -p easytier-mini --features websocket,dns-resolver --target mipsel-unknown-linux-musl -e features > dist/FEATURES.txt
           wc -c dist/easytier-mini-oray-wss* | tee dist/SIZES.txt
           (cd dist && sha256sum easytier-mini-oray-wss easytier-mini-oray-wss-upx > SHA256SUMS)
           {
-            echo '## Oray X1 MIPSEL Mini + WS/WSS'
+            echo '## Oray X1 MIPSEL Mini + WS/WSS + TXT DNS'
             echo '```text'
             cat dist/SIZES.txt
             echo '```'

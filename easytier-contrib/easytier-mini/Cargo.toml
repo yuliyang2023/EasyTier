@@ -8,8 +8,10 @@ license-file = "../../LICENSE"
 build = "build.rs"
 
 [features]
-# Optional transport support; the default compact TCP/UDP build stays unchanged.
+# Optional capabilities; the default compact TCP/UDP build stays unchanged.
 websocket = ["easytier/websocket"]
+# Enable TXT/SRV records and DNS fallback through the existing native resolver.
+dns-resolver = ["easytier/dns-resolver"]
 
 [dependencies]
 anyhow.workspace = true

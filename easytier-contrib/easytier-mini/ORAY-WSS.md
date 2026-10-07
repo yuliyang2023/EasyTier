@@ -1,4 +1,4 @@
-# Oray X1 Mini + WS/WSS
+# Oray X1 Mini + WS/WSS + TXT DNS
 
 本构建面向 OrayBox X1（MT7628AN、OpenWrt `mipsel_24kc`）。
 静态链接、软浮点 MIPSEL，使用 Mini 的体积优化策略。
@@ -17,11 +17,11 @@ GitHub Actions 的 **Oray X1 Mini WSS** 工作流会在 `oray-mini-wss` 或
 `rust-src`，然后执行：
 
 ```sh
-EASYTIER_MINI_FEATURES=websocket ./easytier-contrib/easytier-mini/build-mips.sh mipsel
+EASYTIER_MINI_FEATURES=websocket,dns-resolver ./easytier-contrib/easytier-mini/build-mips.sh mipsel
 ```
 
 不设置 `EASYTIER_MINI_FEATURES` 时仍生成原有 TCP/UDP Mini。
-WS/WSS 增加 TLS 和 WebSocket 代码，最终体积以工作流的 `SIZES.txt` 为准，
+WS/WSS 与 `dns-resolver` 增加 TLS、WebSocket 和 DNS 解析代码，最终体积以工作流的 `SIZES.txt` 为准，
 不能沿用原版 Mini 的 5.5 MB 大小上限。
 
 ## 部署与配置
@@ -56,8 +56,12 @@ nohup /root/easytier-mini --config /root/easytier.conf </dev/null >/tmp/easytier
 支持 `[[proxy_network]]` 子网代理，包括路由通告与 TCP/UDP/ICMP 转发；
 原 `8bdf682b` 构建会在 compact runtime 中忽略这项配置，需更新二进制才能生效。
 未启用 QUIC、WireGuard、KCP、TCP 打洞或完整管理功能。
-TXT DNS 查询的裁剪行为保持原样。
+Oray 工作流启用可选 `dns-resolver`，支持 DNS TXT/SRV 查询，包括通过
+`stun.easytier.cn` 和 `stun-v6.easytier.cn` 的 TXT 记录发现 STUN 服务器。
+默认 TCP/UDP Mini 与仅启用 `websocket` 的构建仍保留原有裁剪行为；
+需要 DNS 记录查询时显式使用 `--features websocket,dns-resolver`。
+解析能力启用后，查询仍取决于设备 DNS 和网络可达性。
 
 WSS 使用上游 EasyTier 的 TLS 实现和证书验证策略，本修改不另外改变该策略。
-工作流验证默认 Mini 和 WebSocket Mini、节点配置过滤、WS/WSS 原生握手，
+工作流验证默认 Mini、WebSocket Mini 和启用 DNS 的 Mini、节点配置过滤、WS/WSS 原生握手以及 DNS 回退测试，
 再用 QEMU 检查普通版及 UPX 版可执行。QEMU 检查不能替代真机的公网 WSS 组网测试。
